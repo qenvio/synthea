@@ -102,7 +102,7 @@ dat$patients <- mutate(dat$patients,
 
 ggplot(dat$patients,
        aes(x = age,
-             fill = GENDER)) +
+           fill = GENDER)) +
   geom_histogram(position = position_dodge(),
                  bins = 30) +
   labs(x = "Age (years)",
@@ -136,17 +136,17 @@ There is information about both the total and covered-by-payer lifetime healthca
 ```{r lifetime-expenses}
 
 dat$patients <- mutate(dat$patients,
-       prop_covered = HEALTHCARE_COVERAGE / HEALTHCARE_EXPENSES)
+                       prop_covered = HEALTHCARE_COVERAGE / HEALTHCARE_EXPENSES)
 
 ggplot(dat$patients,
        aes(x = age,
-             y = prop_covered)) +
+           y = prop_covered)) +
   geom_point(col = 4, alpha = .8) +
   geom_hline(yintercept = 1, col = 2, lty = 2) +
   scale_y_continuous(label = percent) +
   labs(x = "Age (years)",
        y = "Payers' coverage",
-       title= "Lifetime healthcare expenses")
+       title = "Lifetime healthcare expenses")
 
 ```
 
@@ -173,19 +173,22 @@ First, we will set up a wrapper function to ease the manipulation and summary of
 
 ```{r explore-functions}
 
-#' Wrapper to show the number of unique PATIENTS per DESCRIPTION entry for the selected table
+#' Wrapper to show the number of unique PATIENTS per DESCRIPTION entry for the
+#' selected table
 #'
-#' @param input_table One of the EHM tables. It should contain both a PATIENT and a DESCRIPTION columns 
+#' @param input_table One of the EHM tables. It should contain both a PATIENT
+#' and a DESCRIPTION columns 
 #'
 #' @return A list two elements.
 #' \itemize{
 #'   \item result - A `data.frame` with the number of patients per DESCRIPTION
-#'   \item plot - A ggplot object with a dot plot of number of patients vs. rank per DESCRIPTION
+#'   \item plot - A ggplot object with a dot plot of number of patients vs.
+#' rank per DESCRIPTION
 #' }
 #' @export
 #'
 #' @examples
-show_per_description <- function(input_table){
+show_per_description <- function(input_table) {
   mini <- distinct(input_table, PATIENT, DESCRIPTION) %>%
     count(DESCRIPTION, name = "n_patients") %>%
     arrange(desc(n_patients)) %>%
@@ -344,7 +347,8 @@ To do so, we need information from two tables: The number of observations per pa
 
 ```{r observations-age}
 
-observations_patient <- filter(dat$observations, DESCRIPTION == "Body Height") %>%
+observations_patient <- filter(dat$observations,
+                               DESCRIPTION == "Body Height") %>%
   count(PATIENT, name = "n_observations")
 
 aux <- inner_join(observations_patient,
