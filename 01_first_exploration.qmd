@@ -1,0 +1,403 @@
+---
+title: "Exploring Synthea data"
+embed-resources: true
+execute:
+  message: false
+  warning: false
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+---
+
+
+## Dependencies
+
+Here we load the required packages. A the first batch of them are to help with data handling and the second batch are graphic and display utilities. We also set up the general graphic theme.
+
+```{r dependencies}
+
+## data handling
+
+library("dplyr")
+library("tidyr")
+library("stringr")
+library("data.table")
+
+## graphics
+
+library("ggplot2")
+library("scales")
+library("plotly")
+library("DT")
+
+## setting general graphic theme
+
+theme_set(theme_minimal(base_size = 14))
+
+options(ggplot2.discrete.fill = RColorBrewer::brewer.pal(n = 8,
+                                                         "Dark2"))
+
+
+
+```
+
+## Data ingestion
+
+This synthetic data mimic EHR. They were produced by [Synthea](https://synthetichealth.github.io/synthea/) and the corresponding data dictionary can be found [here](https://github.com/synthetichealth/synthea/wiki/CSV-File-Data-Dictionary).
+
+We have downloaded the data in `CSV` format. So we need first to identify the file names (with the corresponding paths) and then load them into the session.
+
+```{r data-ingestion}
+
+last_date <- as.Date("2020-04-30")
+
+files <- list.files("data/csv", patt = "csv$", full = TRUE)
+
+dat <- lapply(files, vroom::vroom)
+
+names(dat) <- basename(files) %>%
+  str_remove(".csv$")
+
+data.frame(table = names(dat),
+           n_rows = sapply(dat, nrow) %>% unname()) %>%
+  arrange(desc(n_rows)) %>%
+  datatable(rownames = FALSE,
+            options = list(pageLength = 20)) %>%
+  formatRound("n_rows", digits = 0)
+
+
+```
+
+
+We have `r length(dat)` tables with a ranging number of rows per table.
+
+As stated in the docs, the end of the follow-up period is `r last_date`.
+
+## Data exploration
+
+### Demographics
+
+The `patients` table contains some demographic information that might be relevant later on. In this case, we are dealing with `r distinct(dat$patients, Id) %>% nrow()`
+
+We can explore some of the information contained there
+
+::: {.panel-tabset}
+
+#### Age
+
+Patients either present a `DEATHDATE` or will be censored by the end of the follow-up period (which is `2020-04-30`). Thus, we can compute the age of each patient.
+
+We can depict the distribution of patients per gender.
+
+```{r patients-age}
+
+dat$patients <- mutate(dat$patients,
+                       age =  if_else(is.na(DEATHDATE),
+                                      as.numeric(last_date -
+                                                   BIRTHDATE) / 365.4,
+                                      as.numeric(DEATHDATE -
+                                                   BIRTHDATE) / 365.4))
+
+ggplot(dat$patients,
+       aes(x = age,
+             fill = GENDER)) +
+  geom_histogram(position = position_dodge(),
+                 bins = 30) +
+  labs(x = "Age (years)",
+       y = "Number of patients",
+       fill = "Gender",
+       title = "Age distribution per gender") +
+  theme(legend.position = c(.8, .8))
+
+
+
+```
+
+#### Ethnicity and Race
+
+We can have a look at the primary ethnicity (*hispanic* and *nonhispanic*) and race of the patients.
+
+```{r race}
+
+count(dat$patients, RACE, ETHNICITY) %>%
+  pivot_wider(names_from = ETHNICITY, values_from = n) %>%
+  arrange(desc(nonhispanic)) %>%
+  knitr::kable()
+
+
+```
+
+#### Lifetime healthcare expenses and coverage
+
+There is information about both the total and covered-by-payer lifetime healthcare expenses per patient. We can check the proportion of expenses covered by the payers against age to spot any strange observations.
+
+```{r lifetime-expenses}
+
+dat$patients <- mutate(dat$patients,
+       prop_covered = HEALTHCARE_COVERAGE / HEALTHCARE_EXPENSES)
+
+ggplot(dat$patients,
+       aes(x = age,
+             y = prop_covered)) +
+  geom_point(col = 4, alpha = .8) +
+  geom_hline(yintercept = 1, col = 2, lty = 2) +
+  scale_y_continuous(label = percent) +
+  labs(x = "Age (years)",
+       y = "Payers' coverage",
+       title= "Lifetime healthcare expenses")
+
+```
+
+It seems there are two patients with *strange* observations, as they present
+
+
+```{r lifetime-expenses-outliers}
+
+
+filter(dat$patients, prop_covered > 1) %>%
+  datatable()
+
+
+
+```
+
+:::
+
+### Healthcare interventions
+
+Now we can explore some other tables that contain information about conditions, medications, procedures and care plans.
+
+First, we will set up a wrapper function to ease the manipulation and summary of the results.
+
+```{r explore-functions}
+
+#' Wrapper to show the number of unique PATIENTS per DESCRIPTION entry for the selected table
+#'
+#' @param input_table One of the EHM tables. It should contain both a PATIENT and a DESCRIPTION columns 
+#'
+#' @return A list two elements.
+#' \itemize{
+#'   \item result - A `data.frame` with the number of patients per DESCRIPTION
+#'   \item plot - A ggplot object with a dot plot of number of patients vs. rank per DESCRIPTION
+#' }
+#' @export
+#'
+#' @examples
+show_per_description <- function(input_table){
+  mini <- distinct(input_table, PATIENT, DESCRIPTION) %>%
+    count(DESCRIPTION, name = "n_patients") %>%
+    arrange(desc(n_patients)) %>%
+    mutate(idx = rank(n_patients, ties.method = "random"))
+  
+  
+  p <- mini %>%
+    ggplot(aes(x = idx,
+               y = n_patients,
+               label = DESCRIPTION)) +
+    geom_point(alpha = .7, col = 4, size = 3) +
+    labs(x = "Rank",
+         y = "Number of patients")
+  
+  list(result = dplyr::select(mini, -idx),
+       plot = p)
+}
+
+```
+
+And then we can move to display the summaries per table.
+
+::: {.panel-tabset}
+
+#### Conditions
+
+We have up to `r distinct(dat$conditions, DESCRIPTION) %>% nrow()` different conditions. Most of them are only present for a handful of patients. However, there are some of them more prevalent. We can inspect them either by hovering on the dots of the plot or by navigating the interactive table.
+
+```{r common-conditions}
+
+aux <- show_per_description(dat$conditions)
+
+pp <- aux$plot +
+  labs(title = "Conditions")
+
+ggplotly(pp)
+
+datatable(aux$result)
+
+```
+
+The top three conditions are related to inflammatory processes of the respiratory system.
+
+#### Medications
+
+We have up to `r distinct(dat$medications, DESCRIPTION) %>% nrow()` different medications. Most of them are taken by a handful of patients. However, there are some of them more prevalent. We can inspect them either by hovering on the dots of the plot or by navigating the interactive table.
+
+```{r common-medications}
+
+aux <- show_per_description(dat$medications)
+
+pp <- aux$plot +
+  labs(title = "Medications")
+
+ggplotly(pp)
+
+datatable(aux$result)
+
+```
+
+The top three medications are painkillers and anti-inflammatory drugs.
+
+#### Procedures
+
+We have up to `r distinct(dat$procedures, DESCRIPTION) %>% nrow()` different procedures. We can inspect them either by hovering on the dots of the plot or by navigating the interactive table.
+
+
+```{r common-procedures}
+
+aux <- show_per_description(dat$procedures)
+
+pp <- aux$plot +
+  labs(title = "Procedures")
+
+ggplotly(pp)
+
+datatable(aux$result)
+
+```
+
+There is one procedure that is present almost in all patients: `r aux$result$DESCRIPTION[1]`
+
+#### Care plans
+
+We have up to `r distinct(dat$careplans, DESCRIPTION) %>% nrow()` different care plans. Most of them are taken by a handful of patients. However, there are some of them more prevalent. We can inspect them either by hovering on the dots of the plot or by navigating the interactive table.
+
+
+```{r common-careplans}
+
+aux <- show_per_description(dat$careplans)
+
+pp <- aux$plot +
+  labs(title = "Care plans")
+
+ggplotly(pp)
+
+datatable(aux$result)
+
+```
+
+The most prevalent care plan is `r aux$result$DESCRIPTION[1]`, which is consistent with the medications results.
+
+#### Observations
+
+We have up to `r distinct(dat$observations, DESCRIPTION) %>% nrow()` different observations. Most of them are taken by a handful of patients. However, there are some of them more prevalent. We can inspect them either by hovering on the dots of the plot or by navigating the interactive table.
+
+```{r observations}
+
+aux <- show_per_description(dat$observations)
+
+pp <- aux$plot +
+  labs(title = "Care plans")
+
+ggplotly(pp)
+
+datatable(aux$result)
+
+```
+
+The observations that are available for all patients are basic biometric measurements, some test results and the smoking status.
+
+#### Encounters
+
+We have up to `r distinct(dat$encounters, DESCRIPTION) %>% nrow()` different encounters. Most of them are taken by a handful of patients. However, there are some of them more prevalent. We can inspect them either by hovering on the dots of the plot or by navigating the interactive table.
+
+```{r encounters}
+
+aux <- show_per_description(dat$encounters)
+
+pp <- aux$plot +
+  labs(title = "Encounters")
+
+ggplotly(pp)
+
+datatable(aux$result)
+
+```
+
+
+
+:::
+
+## Data integration
+
+We can integrate several tables to extract relevant insights. To do so, we need to take into account what are the primary and foregein keys of each table.
+
+
+::: {.panel-tabset}
+
+### Observations per patient
+
+As seen in the previous section, there are a set of observations present for all patients. One of them is "Body Height". We can check if the number of observations per patient (frequency)  is related to the patient's age.
+
+To do so, we need information from two tables: The number of observations per patients from the `observations` table and the age from the `patients` table.
+
+
+```{r observations-age}
+
+observations_patient <- filter(dat$observations, DESCRIPTION == "Body Height") %>%
+  count(PATIENT, name = "n_observations")
+
+aux <- inner_join(observations_patient,
+                  dat$patients, by = c("PATIENT" = "Id"))
+
+ggplot(aux,
+       aes(x = age,
+           y = n_observations)) +
+  geom_point(col = 4, alpha = .8) +
+  labs(x = "Age (years)",
+       y = "Frequency",
+       title = "Number of Body Height observations during follow-up")
+
+```   
+   
+
+
+### Cost of care plans
+
+We can also investigate what are the costs of the top 10 most administered care plans. To do so, we need to merge information from the care plans and the encounter tables.
+
+```{r careplan-cost}
+
+
+aux <- inner_join(dplyr::select(dat$careplans,
+                         ENCOUNTER, PATIENT, DESCRIPTION),
+           dplyr::select(dat$encounters,
+                         Id, PATIENT, TOTAL_CLAIM_COST, PAYER_COVERAGE),
+           by = c("ENCOUNTER" = "Id",
+                  "PATIENT" = "PATIENT")) %>%
+  mutate(prop_coverage = PAYER_COVERAGE / TOTAL_CLAIM_COST)
+
+top_10 <- count(aux, DESCRIPTION, PATIENT) %>%
+  count(DESCRIPTION) %>%
+  arrange(desc(n)) %>%
+  head(10)
+
+inner_join(aux, top_10, by = "DESCRIPTION") %>%
+  mutate(DESCRIPTION = reorder(DESCRIPTION, prop_coverage)) %>%
+  ggplot(aes(x = DESCRIPTION,
+             y = prop_coverage,
+             color = DESCRIPTION)) +
+  ggforce::geom_sina(alpha = .8) +
+  scale_color_brewer(palette = "Paired", guide = "none") +
+  scale_y_continuous(label = percent) +
+  coord_flip() +
+  labs(x = NULL,
+       y = "Payers' coverage",
+       title = "Healthcare expenses\n(10 most common care plans)",
+       caption = "Each dot corresponds to one patient")
+
+```
+      
+
+:::
+
