@@ -18,8 +18,6 @@ unzip synthea_sample_data_csv_apr2020.zip
 ```
 
 The corresponding data dictionary can be found [here](https://github.com/synthetichealth/synthea/wiki/CSV-File-Data-Dictionary).
-Synthea data.
-
 
 # Rendering reports
 
