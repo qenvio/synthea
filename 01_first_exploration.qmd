@@ -370,14 +370,14 @@ We can also investigate what are the costs of the top 10 most administered care 
 
 
 aux <- inner_join(dplyr::select(dat$careplans,
-                         ENCOUNTER, PATIENT, DESCRIPTION),
-           dplyr::select(dat$encounters,
-                         Id, PATIENT, TOTAL_CLAIM_COST, PAYER_COVERAGE),
-           by = c("ENCOUNTER" = "Id",
-                  "PATIENT" = "PATIENT")) %>%
+                                ENCOUNTER, PATIENT, DESCRIPTION),
+                  dplyr::select(dat$encounters,
+                                Id, PATIENT, TOTAL_CLAIM_COST, PAYER_COVERAGE),
+                  by = c("ENCOUNTER" = "Id",
+                         "PATIENT" = "PATIENT")) %>%
   mutate(prop_coverage = PAYER_COVERAGE / TOTAL_CLAIM_COST)
 
-top_10 <- count(aux, DESCRIPTION, PATIENT) %>%
+top_10 <- distinct(aux, DESCRIPTION, PATIENT) %>%
   count(DESCRIPTION) %>%
   arrange(desc(n)) %>%
   head(10)
